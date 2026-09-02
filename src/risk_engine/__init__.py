@@ -1,4 +1,4 @@
-"""Risk engine containing heuristic compliance rules and machine learning triage."""
+"""Risk engine containing heuristic compliance rules, machine learning triage, and combined assessment."""
 
 from src.risk_engine.rules import (
     RuleEngine,
@@ -10,6 +10,8 @@ from src.risk_engine.rules import (
     RuleHighRiskJurisdiction,
     RuleVelocityAnomaly,
 )
+from src.risk_engine.ml_model import MLRiskClassifier, MODEL_FEATURE_COLUMNS
+from src.risk_engine.assessor import TransactionRiskAssessor, CombinedRiskAssessment
 
 __all__ = [
     "RuleEngine",
@@ -20,4 +22,8 @@ __all__ = [
     "RuleRapidDrain",
     "RuleHighRiskJurisdiction",
     "RuleVelocityAnomaly",
+    "MLRiskClassifier",
+    "MODEL_FEATURE_COLUMNS",
+    "TransactionRiskAssessor",
+    "CombinedRiskAssessment",
 ]
