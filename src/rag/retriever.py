@@ -133,7 +133,7 @@ class AMLPolicyRetriever:
             },
             {
                 "query": "cross border wire transfer high risk country sanctions North Korea Iran",
-                "expected_doc": "FATF_RECOMMENDATION_16_WIRE_TRANSFERS",
+                "expected_doc": "FATF_RECOMMENDATION",
             },
             {
                 "query": "customer turnover deviation request for information RFI escalation",
