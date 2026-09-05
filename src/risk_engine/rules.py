@@ -1,6 +1,7 @@
 """Deterministic heuristic compliance rules for AML transaction monitoring."""
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
@@ -228,20 +229,45 @@ class RuleVelocityAnomaly(BaseRule):
     ) -> RuleResult:
         amount = float(tx.get("amount", 0.0))
 
-        # Check if customer historical profile shows high deviation
+        # Check if customer historical profile shows high velocity within 24 hours
         if history and len(history) >= settings.RAPID_VELOCITY_TX_LIMIT_24H:
-            return RuleResult(
-                rule_id=self.rule_id,
-                rule_name=self.rule_name,
-                triggered=True,
-                severity="MEDIUM",
-                score=0.65,
-                description=(
-                    f"Customer executed {len(history)} transactions within monitoring window, "
-                    f"exceeding rapid velocity threshold ({settings.RAPID_VELOCITY_TX_LIMIT_24H})."
-                ),
-                details={"tx_count": len(history), "limit": settings.RAPID_VELOCITY_TX_LIMIT_24H},
-            )
+            tx_ts_str = tx.get("timestamp")
+            has_timestamps = any("timestamp" in h for h in history)
+            if tx_ts_str and has_timestamps:
+                try:
+                    tx_ts = datetime.fromisoformat(str(tx_ts_str))
+                    recent_24h = [
+                        h for h in history
+                        if h.get("timestamp") and abs((tx_ts - datetime.fromisoformat(str(h["timestamp"]))).total_seconds()) <= 86400
+                    ]
+                    if len(recent_24h) >= settings.RAPID_VELOCITY_TX_LIMIT_24H:
+                        return RuleResult(
+                            rule_id=self.rule_id,
+                            rule_name=self.rule_name,
+                            triggered=True,
+                            severity="MEDIUM",
+                            score=0.65,
+                            description=(
+                                f"Customer executed {len(recent_24h)} transactions within a 24-hour window, "
+                                f"exceeding rapid velocity threshold ({settings.RAPID_VELOCITY_TX_LIMIT_24H})."
+                            ),
+                            details={"tx_count_24h": len(recent_24h), "limit": settings.RAPID_VELOCITY_TX_LIMIT_24H},
+                        )
+                except Exception:
+                    pass
+            elif not has_timestamps:
+                return RuleResult(
+                    rule_id=self.rule_id,
+                    rule_name=self.rule_name,
+                    triggered=True,
+                    severity="MEDIUM",
+                    score=0.65,
+                    description=(
+                        f"Customer executed {len(history)} transactions within monitoring window, "
+                        f"exceeding rapid velocity threshold ({settings.RAPID_VELOCITY_TX_LIMIT_24H})."
+                    ),
+                    details={"tx_count": len(history), "limit": settings.RAPID_VELOCITY_TX_LIMIT_24H},
+                )
 
         # Check customer monthly expected turnover deviation if customer profile is present
         if customer and customer.get("expected_monthly_turnover"):
