@@ -8,7 +8,7 @@ from src.risk_engine.ml_model import MLRiskClassifier
 
 
 class CombinedRiskAssessment(BaseModel):
-    """Unified risk evaluation combining deterministic compliance rules and ML prediction."""
+    """Unified risk evaluation combining deterministic compliance rules and ML prediction with full explainability."""
 
     transaction_id: str
     final_risk_level: str = Field(..., description="Final risk rating: LOW, MEDIUM, or HIGH")
@@ -21,6 +21,8 @@ class CombinedRiskAssessment(BaseModel):
     ml_risk_level: str
     top_ml_signals: List[str]
     explanation: str
+    rule_explanations: List[Dict[str, Any]] = Field(default_factory=list, description="Structured explainability for each triggered compliance rule")
+    ml_explanation: Optional[Dict[str, Any]] = Field(default=None, description="Structured transparency details for the ML anomaly classifier")
 
 
 class TransactionRiskAssessor:
@@ -40,7 +42,7 @@ class TransactionRiskAssessor:
         customer: Optional[Dict[str, Any]] = None,
         history: Optional[List[Dict[str, Any]]] = None,
     ) -> CombinedRiskAssessment:
-        """Runs rule evaluation and ML inference, producing a consolidated risk assessment."""
+        """Runs rule evaluation and ML inference, producing a consolidated risk assessment with complete explanations."""
         tx_id = str(tx.get("transaction_id", "UNKNOWN"))
 
         # 1. Rule Evaluation
@@ -50,6 +52,7 @@ class TransactionRiskAssessor:
         rule_score = rule_summary.overall_rule_score
         rule_severity = rule_summary.overall_severity
         triggered_rule_names = [r.rule_name for r in rule_summary.triggered_rules]
+        rule_explanations = [exp.model_dump() for exp in rule_summary.rule_explanations]
 
         # 2. ML Prediction (gracefully handles if model not yet trained)
         try:
@@ -58,11 +61,24 @@ class TransactionRiskAssessor:
             ml_proba = ml_result["ml_risk_probability"]
             ml_level = ml_result["ml_risk_level"]
             top_signals = ml_result["top_model_signals"]
+            ml_explanation = ml_result.get("ml_explanation")
         except Exception:
             # Fallback if model artifact is unavailable
             ml_proba = 0.0
             ml_level = "LOW"
             top_signals = ["ML model not loaded; defaulting to rule score"]
+            ml_explanation = {
+                "model_name": "RandomForestClassifier",
+                "model_version": "1.0.0",
+                "anomaly_probability": 0.0,
+                "prediction_label": "Normal",
+                "risk_level": "LOW",
+                "is_anomalous": False,
+                "input_features": {},
+                "top_signals": top_signals,
+                "risk_interpretation": "ML model artifact unavailable; defaulted to rule score.",
+                "known_limitations": "Model not loaded.",
+            }
 
         # 3. Transparent Combined Scoring Logic
         if rule_severity == "CRITICAL":
@@ -119,4 +135,6 @@ class TransactionRiskAssessor:
             ml_risk_level=ml_level,
             top_ml_signals=top_signals,
             explanation=explanation,
+            rule_explanations=rule_explanations,
+            ml_explanation=ml_explanation,
         )

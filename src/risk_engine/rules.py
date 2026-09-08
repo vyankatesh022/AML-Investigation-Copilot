@@ -8,6 +8,20 @@ from pydantic import BaseModel, Field
 from src.config import settings
 
 
+class RuleExplanation(BaseModel):
+    """Structured explainability details for an individual compliance rule evaluation."""
+
+    rule_id: str = Field(..., description="Unique compliance rule identifier (e.g. 'RULE_STRUCTURING')")
+    rule_name: str = Field(..., description="Human-readable rule name")
+    triggered: bool = Field(..., description="Whether the rule criteria were met")
+    severity: str = Field(..., description="Severity level: 'LOW', 'MEDIUM', 'HIGH', or 'CRITICAL'")
+    risk_contribution_score: float = Field(..., description="Risk score contributed by this rule (0.0 - 1.0)")
+    reason: str = Field(..., description="Plain-language explanation of why the rule fired or did not fire")
+    condition: str = Field(..., description="Configured rule condition description or formula")
+    observed_values: Dict[str, Any] = Field(default_factory=dict, description="Actual transaction and customer values evaluated")
+    configured_thresholds: Dict[str, Any] = Field(default_factory=dict, description="Configured policy and system threshold limits")
+
+
 class RuleResult(BaseModel):
     """Result of evaluating an individual compliance rule."""
 
@@ -18,6 +32,7 @@ class RuleResult(BaseModel):
     score: float = 0.0  # Normalized 0.0 to 1.0
     description: str
     details: Dict[str, Any] = Field(default_factory=dict)
+    explanation: Optional[RuleExplanation] = None
 
 
 class RuleEvaluationSummary(BaseModel):
@@ -30,6 +45,7 @@ class RuleEvaluationSummary(BaseModel):
     triggered_rules_count: int
     triggered_rules: List[RuleResult]
     summary_narrative: str
+    rule_explanations: List[RuleExplanation] = Field(default_factory=list)
 
 
 class BaseRule(ABC):
@@ -67,24 +83,50 @@ class RuleHighAmount(BaseRule):
         if amount >= threshold:
             severity = "CRITICAL" if amount >= 100000.0 else "HIGH"
             score = 0.95 if amount >= 100000.0 else 0.75
+            desc = f"Transaction amount of ${amount:,.2f} meets or exceeds statutory threshold (${threshold:,.2f})."
+            explanation = RuleExplanation(
+                rule_id=self.rule_id,
+                rule_name=self.rule_name,
+                triggered=True,
+                severity=severity,
+                risk_contribution_score=score,
+                reason=f"The transaction amount of ${amount:,.2f} meets or exceeds the configured statutory threshold of ${threshold:,.2f}.",
+                condition=f"Transaction amount >= ${threshold:,.2f}",
+                observed_values={"amount": amount},
+                configured_thresholds={"threshold": threshold, "critical_threshold": 100000.0},
+            )
             return RuleResult(
                 rule_id=self.rule_id,
                 rule_name=self.rule_name,
                 triggered=True,
                 severity=severity,
                 score=score,
-                description=f"Transaction amount of ${amount:,.2f} meets or exceeds statutory threshold (${threshold:,.2f}).",
+                description=desc,
                 details={"amount": amount, "threshold": threshold},
+                explanation=explanation,
             )
 
+        desc = f"Transaction amount ${amount:,.2f} is below reporting threshold (${threshold:,.2f})."
+        explanation = RuleExplanation(
+            rule_id=self.rule_id,
+            rule_name=self.rule_name,
+            triggered=False,
+            severity="LOW",
+            risk_contribution_score=0.0,
+            reason=f"The transaction amount of ${amount:,.2f} is below the reporting threshold of ${threshold:,.2f}.",
+            condition=f"Transaction amount >= ${threshold:,.2f}",
+            observed_values={"amount": amount},
+            configured_thresholds={"threshold": threshold},
+        )
         return RuleResult(
             rule_id=self.rule_id,
             rule_name=self.rule_name,
             triggered=False,
             severity="LOW",
             score=0.0,
-            description=f"Transaction amount ${amount:,.2f} is below reporting threshold (${threshold:,.2f}).",
+            description=desc,
             details={"amount": amount, "threshold": threshold},
+            explanation=explanation,
         )
 
 
@@ -105,27 +147,56 @@ class RuleStructuring(BaseRule):
         upper = settings.STRUCTURING_UPPER_BOUND
 
         if lower <= amount <= upper:
+            desc = (
+                f"Transaction amount of ${amount:,.2f} falls into structuring range "
+                f"(${lower:,.2f} - ${upper:,.2f}), a classic indicator of evasion of the $10,000 threshold."
+            )
+            explanation = RuleExplanation(
+                rule_id=self.rule_id,
+                rule_name=self.rule_name,
+                triggered=True,
+                severity="HIGH",
+                risk_contribution_score=0.85,
+                reason=(
+                    f"The transaction amount of ${amount:,.2f} falls into the configured structuring corridor "
+                    f"(${lower:,.2f} - ${upper:,.2f}), indicating potential evasion of statutory CTR reporting."
+                ),
+                condition=f"${lower:,.2f} <= Transaction amount <= ${upper:,.2f}",
+                observed_values={"amount": amount},
+                configured_thresholds={"lower_bound": lower, "upper_bound": upper},
+            )
             return RuleResult(
                 rule_id=self.rule_id,
                 rule_name=self.rule_name,
                 triggered=True,
                 severity="HIGH",
                 score=0.85,
-                description=(
-                    f"Transaction amount of ${amount:,.2f} falls into structuring range "
-                    f"(${lower:,.2f} - ${upper:,.2f}), a classic indicator of evasion of the $10,000 threshold."
-                ),
+                description=desc,
                 details={"amount": amount, "range_min": lower, "range_max": upper},
+                explanation=explanation,
             )
 
+        desc = f"Amount ${amount:,.2f} outside structuring corridor."
+        explanation = RuleExplanation(
+            rule_id=self.rule_id,
+            rule_name=self.rule_name,
+            triggered=False,
+            severity="LOW",
+            risk_contribution_score=0.0,
+            reason=f"Transaction amount of ${amount:,.2f} is outside the structuring corridor (${lower:,.2f} - ${upper:,.2f}).",
+            condition=f"${lower:,.2f} <= Transaction amount <= ${upper:,.2f}",
+            observed_values={"amount": amount},
+            configured_thresholds={"lower_bound": lower, "upper_bound": upper},
+        )
         return RuleResult(
             rule_id=self.rule_id,
             rule_name=self.rule_name,
             triggered=False,
             severity="LOW",
             score=0.0,
-            description=f"Amount ${amount:,.2f} outside structuring corridor.",
+            description=desc,
             details={"amount": amount},
+            explanation=explanation,
         )
 
 
@@ -148,31 +219,64 @@ class RuleRapidDrain(BaseRule):
         if old_orig > 3000.0:
             drain_ratio = (old_orig - new_orig) / old_orig
             if drain_ratio >= settings.RAPID_DRAIN_RATIO and new_orig <= 1000.0:
+                desc = (
+                    f"Transaction emptied {drain_ratio * 100:.1f}% of starting balance "
+                    f"(${old_orig:,.2f} down to ${new_orig:,.2f}), characteristic of mule/pass-through activity."
+                )
+                explanation = RuleExplanation(
+                    rule_id=self.rule_id,
+                    rule_name=self.rule_name,
+                    triggered=True,
+                    severity="HIGH",
+                    risk_contribution_score=0.80,
+                    reason=(
+                        f"The transaction drained {drain_ratio * 100:.1f}% of starting account balance "
+                        f"(${old_orig:,.2f} down to ${new_orig:,.2f}), exceeding the {settings.RAPID_DRAIN_RATIO * 100:.0f}% drain threshold."
+                    ),
+                    condition=f"Drain ratio >= {settings.RAPID_DRAIN_RATIO * 100:.0f}% with starting balance > $3,000 and ending balance <= $1,000",
+                    observed_values={"old_balance": old_orig, "new_balance": new_orig, "drain_ratio": round(drain_ratio, 4)},
+                    configured_thresholds={
+                        "drain_ratio_threshold": settings.RAPID_DRAIN_RATIO,
+                        "min_starting_balance": 3000.0,
+                        "max_ending_balance": 1000.0,
+                    },
+                )
                 return RuleResult(
                     rule_id=self.rule_id,
                     rule_name=self.rule_name,
                     triggered=True,
                     severity="HIGH",
                     score=0.80,
-                    description=(
-                        f"Transaction emptied {drain_ratio * 100:.1f}% of starting balance "
-                        f"(${old_orig:,.2f} down to ${new_orig:,.2f}), characteristic of mule/pass-through activity."
-                    ),
+                    description=desc,
                     details={
                         "old_balance": old_orig,
                         "new_balance": new_orig,
                         "drain_ratio": round(drain_ratio, 4),
                     },
+                    explanation=explanation,
                 )
 
+        desc = "Balance drain within normal limits."
+        explanation = RuleExplanation(
+            rule_id=self.rule_id,
+            rule_name=self.rule_name,
+            triggered=False,
+            severity="LOW",
+            risk_contribution_score=0.0,
+            reason="Account balance depletion ratio is within normal operational limits.",
+            condition=f"Drain ratio >= {settings.RAPID_DRAIN_RATIO * 100:.0f}%",
+            observed_values={"old_balance": old_orig, "new_balance": new_orig},
+            configured_thresholds={"drain_ratio_threshold": settings.RAPID_DRAIN_RATIO},
+        )
         return RuleResult(
             rule_id=self.rule_id,
             rule_name=self.rule_name,
             triggered=False,
             severity="LOW",
             score=0.0,
-            description="Balance drain within normal limits.",
+            description=desc,
             details={"old_balance": old_orig, "new_balance": new_orig},
+            explanation=explanation,
         )
 
 
@@ -191,27 +295,53 @@ class RuleHighRiskJurisdiction(BaseRule):
         country = str(tx.get("counterparty_country", "USA")).upper()
 
         if country in settings.HIGH_RISK_JURISDICTIONS:
+            desc = (
+                f"Counterparty jurisdiction '{country}' is designated as a high-risk or sanctioned "
+                f"territory under FATF / international AML standards."
+            )
+            explanation = RuleExplanation(
+                rule_id=self.rule_id,
+                rule_name=self.rule_name,
+                triggered=True,
+                severity="CRITICAL",
+                risk_contribution_score=0.95,
+                reason=f"Counterparty jurisdiction '{country}' is included in the configured sanctioned/high-risk jurisdictions list.",
+                condition=f"Counterparty country in high-risk jurisdictions: {sorted(list(settings.HIGH_RISK_JURISDICTIONS))}",
+                observed_values={"counterparty_country": country},
+                configured_thresholds={"sanctioned_jurisdictions": sorted(list(settings.HIGH_RISK_JURISDICTIONS))},
+            )
             return RuleResult(
                 rule_id=self.rule_id,
                 rule_name=self.rule_name,
                 triggered=True,
                 severity="CRITICAL",
                 score=0.95,
-                description=(
-                    f"Counterparty jurisdiction '{country}' is designated as a high-risk or sanctioned "
-                    f"territory under FATF / international AML standards."
-                ),
-                details={"country": country, "sanctioned_list": list(settings.HIGH_RISK_JURISDICTIONS)},
+                description=desc,
+                details={"country": country, "sanctioned_list": sorted(list(settings.HIGH_RISK_JURISDICTIONS))},
+                explanation=explanation,
             )
 
+        desc = f"Jurisdiction '{country}' is standard risk."
+        explanation = RuleExplanation(
+            rule_id=self.rule_id,
+            rule_name=self.rule_name,
+            triggered=False,
+            severity="LOW",
+            risk_contribution_score=0.0,
+            reason=f"Counterparty jurisdiction '{country}' is not recognized as high risk.",
+            condition="Counterparty country in high-risk jurisdictions",
+            observed_values={"counterparty_country": country},
+            configured_thresholds={"sanctioned_jurisdictions": sorted(list(settings.HIGH_RISK_JURISDICTIONS))},
+        )
         return RuleResult(
             rule_id=self.rule_id,
             rule_name=self.rule_name,
             triggered=False,
             severity="LOW",
             score=0.0,
-            description=f"Jurisdiction '{country}' is standard risk.",
+            description=desc,
             details={"country": country},
+            explanation=explanation,
         )
 
 
@@ -241,59 +371,111 @@ class RuleVelocityAnomaly(BaseRule):
                         if h.get("timestamp") and abs((tx_ts - datetime.fromisoformat(str(h["timestamp"]))).total_seconds()) <= 86400
                     ]
                     if len(recent_24h) >= settings.RAPID_VELOCITY_TX_LIMIT_24H:
+                        desc = (
+                            f"Customer executed {len(recent_24h)} transactions within a 24-hour window, "
+                            f"exceeding rapid velocity threshold ({settings.RAPID_VELOCITY_TX_LIMIT_24H})."
+                        )
+                        explanation = RuleExplanation(
+                            rule_id=self.rule_id,
+                            rule_name=self.rule_name,
+                            triggered=True,
+                            severity="MEDIUM",
+                            risk_contribution_score=0.65,
+                            reason=desc,
+                            condition=f"Transactions within 24h >= {settings.RAPID_VELOCITY_TX_LIMIT_24H}",
+                            observed_values={"tx_count_24h": len(recent_24h)},
+                            configured_thresholds={"limit_24h": settings.RAPID_VELOCITY_TX_LIMIT_24H},
+                        )
                         return RuleResult(
                             rule_id=self.rule_id,
                             rule_name=self.rule_name,
                             triggered=True,
                             severity="MEDIUM",
                             score=0.65,
-                            description=(
-                                f"Customer executed {len(recent_24h)} transactions within a 24-hour window, "
-                                f"exceeding rapid velocity threshold ({settings.RAPID_VELOCITY_TX_LIMIT_24H})."
-                            ),
+                            description=desc,
                             details={"tx_count_24h": len(recent_24h), "limit": settings.RAPID_VELOCITY_TX_LIMIT_24H},
+                            explanation=explanation,
                         )
                 except Exception:
                     pass
             elif not has_timestamps:
+                desc = (
+                    f"Customer executed {len(history)} transactions within monitoring window, "
+                    f"exceeding rapid velocity threshold ({settings.RAPID_VELOCITY_TX_LIMIT_24H})."
+                )
+                explanation = RuleExplanation(
+                    rule_id=self.rule_id,
+                    rule_name=self.rule_name,
+                    triggered=True,
+                    severity="MEDIUM",
+                    risk_contribution_score=0.65,
+                    reason=desc,
+                    condition=f"Monitoring window transactions >= {settings.RAPID_VELOCITY_TX_LIMIT_24H}",
+                    observed_values={"tx_count": len(history)},
+                    configured_thresholds={"limit": settings.RAPID_VELOCITY_TX_LIMIT_24H},
+                )
                 return RuleResult(
                     rule_id=self.rule_id,
                     rule_name=self.rule_name,
                     triggered=True,
                     severity="MEDIUM",
                     score=0.65,
-                    description=(
-                        f"Customer executed {len(history)} transactions within monitoring window, "
-                        f"exceeding rapid velocity threshold ({settings.RAPID_VELOCITY_TX_LIMIT_24H})."
-                    ),
+                    description=desc,
                     details={"tx_count": len(history), "limit": settings.RAPID_VELOCITY_TX_LIMIT_24H},
+                    explanation=explanation,
                 )
 
         # Check customer monthly expected turnover deviation if customer profile is present
         if customer and customer.get("expected_monthly_turnover"):
             turnover = float(customer["expected_monthly_turnover"])
             if amount > turnover * 1.5 and amount > 5000:
+                desc = (
+                    f"Transaction amount of ${amount:,.2f} exceeds 150% of customer's declared "
+                    f"monthly turnover (${turnover:,.2f})."
+                )
+                explanation = RuleExplanation(
+                    rule_id=self.rule_id,
+                    rule_name=self.rule_name,
+                    triggered=True,
+                    severity="HIGH",
+                    risk_contribution_score=0.75,
+                    reason=desc,
+                    condition=f"Transaction amount > 150% of expected turnover (${turnover:,.2f})",
+                    observed_values={"amount": amount, "expected_monthly_turnover": turnover},
+                    configured_thresholds={"turnover_multiplier": 1.5, "min_amount_trigger": 5000.0},
+                )
                 return RuleResult(
                     rule_id=self.rule_id,
                     rule_name=self.rule_name,
                     triggered=True,
                     severity="HIGH",
                     score=0.75,
-                    description=(
-                        f"Transaction amount of ${amount:,.2f} exceeds 150% of customer's declared "
-                        f"monthly turnover (${turnover:,.2f})."
-                    ),
+                    description=desc,
                     details={"amount": amount, "expected_turnover": turnover},
+                    explanation=explanation,
                 )
 
+        desc = "Transaction frequency and volume conform with customer baseline."
+        explanation = RuleExplanation(
+            rule_id=self.rule_id,
+            rule_name=self.rule_name,
+            triggered=False,
+            severity="LOW",
+            risk_contribution_score=0.0,
+            reason="Transaction frequency and volume conform with customer baseline.",
+            condition=f"Transactions within 24h < {settings.RAPID_VELOCITY_TX_LIMIT_24H}",
+            observed_values={"history_count": len(history) if history else 0},
+            configured_thresholds={"limit_24h": settings.RAPID_VELOCITY_TX_LIMIT_24H},
+        )
         return RuleResult(
             rule_id=self.rule_id,
             rule_name=self.rule_name,
             triggered=False,
             severity="LOW",
             score=0.0,
-            description="Transaction frequency and volume conform with customer baseline.",
+            description=desc,
             details={"history_count": len(history) if history else 0},
+            explanation=explanation,
         )
 
 
@@ -315,7 +497,7 @@ class RuleEngine:
         customer: Optional[Dict[str, Any]] = None,
         history: Optional[List[Dict[str, Any]]] = None,
     ) -> RuleEvaluationSummary:
-        """Executes all rules and returns an aggregated compliance summary."""
+        """Executes all rules and returns an aggregated compliance summary with explainability."""
         results: List[RuleResult] = []
         for rule in self.rules:
             result = rule.evaluate(tx=tx, customer=customer, history=history)
@@ -323,6 +505,7 @@ class RuleEngine:
 
         triggered = [r for r in results if r.triggered]
         tx_id = str(tx.get("transaction_id", "UNKNOWN"))
+        rule_explanations = [r.explanation for r in triggered if r.explanation is not None]
 
         if not triggered:
             return RuleEvaluationSummary(
@@ -333,6 +516,7 @@ class RuleEngine:
                 triggered_rules_count=0,
                 triggered_rules=[],
                 summary_narrative="No heuristic compliance red flags detected. Transaction appears normal.",
+                rule_explanations=[],
             )
 
         # Calculate overall score: take highest severity score with additive boost for multiple hits
@@ -365,4 +549,5 @@ class RuleEngine:
             triggered_rules_count=len(triggered),
             triggered_rules=triggered,
             summary_narrative=narrative,
+            rule_explanations=rule_explanations,
         )

@@ -9,13 +9,13 @@ FinGuard AI is an Anti-Money Laundering (AML) transaction monitoring assistant d
 Financial institutions process millions of daily transactions, making manual transaction monitoring labor-intensive and prone to fatigue. **FinGuard AI** addresses this challenge by automating the preliminary stages of an AML compliance investigation:
 
 1. **Transaction Ingestion & Validation:** Validates transactions and checks originator and beneficiary balance movements.
-2. **Dual-Screening Risk Scoring:** Combines deterministic compliance rules with a trained Scikit-Learn Random Forest model to calculate a consolidated risk rating (`LOW`, `MEDIUM`, or `HIGH`).
-3. **Evidence Aggregation via MCP Tools:** Fetches customer KYC profiles, recent historical transaction patterns, and risk signals through structured tools.
-4. **Regulatory Grounding (RAG):** Retrieves relevant clauses and guidance from FATF standards, FinCEN advisories, and internal bank policies.
-5. **AI Investigation Summary:** Generates an 8-section case summary with citations and recommended disposition (`CLOSE_AS_FALSE_POSITIVE`, `REQUEST_INFORMATION_RFI`, or `ESCALATE_TO_SAR_COMMITTEE`).
-6. **FastAPI Delivery:** Exposes data, risk scoring, and end-to-end investigation execution through validated REST endpoints.
+2. **Dual-Screening Risk Scoring & Explainability:** Combines deterministic compliance rules with a trained Scikit-Learn Random Forest model, providing structured rule conditions, observed values, and top ML feature importance signals.
+3. **Evidence Aggregation & Traceability:** Collects chronological, verifiable evidence records across all stages (`EV-TX-...`, `EV-RULE-...`, `EV-ML-...`, `EV-CUST-...`, `EV-HIST-...`, `EV-RAG-...`) with source tracking and confidence scores.
+4. **Regulatory Grounding (RAG):** Retrieves relevant clauses and guidance from FATF standards, FinCEN advisories, and internal bank policies with chunk ID traceability.
+5. **AI Investigation Summary & Traceability Matrix:** Generates an evidence-grounded case summary with citations, an Evidence Traceability Matrix, separated AI analytical observations, and recommended disposition (`CLOSE_AS_FALSE_POSITIVE`, `REQUEST_INFORMATION_RFI`, or `ESCALATE_TO_SAR_COMMITTEE`).
+6. **FastAPI Delivery:** Exposes data, explainable risk scoring, and end-to-end investigation execution through validated REST endpoints.
 
-> **Note on Scope:** FinGuard AI is intended strictly for **preliminary investigation assistance**. It does not make final compliance or legal decisions.
+> **Note on Scope:** FinGuard AI is intended strictly for **preliminary investigation assistance**. It does not make autonomous compliance, legal, or SAR filing decisions.
 
 ---
 
@@ -25,15 +25,16 @@ The following features are fully implemented and verified in the codebase:
 
 * **Transaction Data Ingestion & Validation:** Loads, deduplicates, and validates tabular transaction records using Pydantic schemas (`src/data/loader.py`).
 * **Feature Extraction & Preprocessing:** Computes dynamic behavioral metrics including balance drain ratios, night transactions, and counterparty country risk (`src/data/preprocessor.py`).
-* **Deterministic Rule-Based Detection:** Evaluates transactions against 5 real-world AML compliance rules with boundary thresholds (`src/risk_engine/rules.py`).
-* **Machine Learning Risk Classifier:** Random Forest classifier trained on tabular features producing anomaly probabilities and explainable top signals (`src/risk_engine/ml_model.py`).
-* **Combined Risk Assessor:** Dual-screening synthesis weighting deterministic rule severities and ML anomaly scores into a composite rating (`src/risk_engine/assessor.py`).
+* **Explainable Rule-Based Detection:** Evaluates transactions against 5 real-world AML compliance rules with conditions, observed values, configured thresholds, and risk contribution scores (`src/risk_engine/rules.py`).
+* **Explainable ML Risk Classifier:** Random Forest classifier with 15-feature numeric vector tracking, top ranking signals with feature importances, anomaly probabilities, and statistical vs. crime distinction (`src/risk_engine/ml_model.py`).
+* **Combined Risk Assessor:** Dual-screening synthesis weighting deterministic rule severities and ML anomaly scores into a composite rating with full explainability metadata (`src/risk_engine/assessor.py`).
+* **Unified Evidence Traceability & Collector:** Thread-safe collector tracking chronological evidence items with unique IDs (`EV-TX`, `EV-RULE`, `EV-ML`, `EV-CUST`, `EV-HIST`, `EV-RAG`), source attribution, and confidence metrics (`src/evidence/`).
 * **AML Policy Document Loader & Chunker:** Loads and segments FATF, FinCEN, and internal bank policies into searchable markdown chunks (`src/rag/document_loader.py`).
-* **Vector Store & Semantic Retrieval:** TF-IDF and cosine-similarity vector store indexing policies and formatting human-readable citations (`src/rag/vector_store.py`, `src/rag/retriever.py`).
+* **Vector Store & Traceable Semantic Retrieval:** TF-IDF and cosine-similarity vector store indexing policies with traceable chunk IDs, document titles, authorities, and similarity scores (`src/rag/vector_store.py`, `src/rag/retriever.py`).
 * **Model Context Protocol (MCP) Tools:** Standardized tool interfaces for customer profile lookup, transaction history analysis, transaction lookup, and risk evaluation (`src/mcp_tools/`).
-* **LangGraph-Inspired Investigation Workflow:** Stateful 6-stage linear graph orchestrating transaction lookups, risk scoring, KYC enrichment, history summarization, policy retrieval, and LLM summary generation (`src/workflow/graph.py`).
-* **LLM Investigation Synthesizer:** Produces structured 8-section case narratives with recommended next steps. Supports live Gemini/OpenAI API inference with an automatic grounded offline fallback (`src/workflow/llm.py`).
-* **FastAPI REST API:** 6 fully typed REST endpoints with interactive Swagger UI documentation, pagination, query filtering, and CORS support (`src/api/app.py`).
+* **LangGraph Investigation Workflow:** Stateful 6-stage linear graph orchestrating transaction lookups, risk scoring, KYC enrichment, history summarization, policy retrieval, evidence accumulation, and LLM summary generation (`src/workflow/graph.py`).
+* **Evidence-Grounded Synthesizer & Traceability Matrix:** Produces structured case narratives with a Section 9 Evidence Traceability Matrix, clearly distinguishing factual records from AI interpretations with advisory disclaimers (`src/workflow/llm.py`).
+* **FastAPI REST API:** Fully typed REST endpoints with interactive Swagger UI documentation, pagination, query filtering, CORS support, and comprehensive evidence trace schemas (`src/api/app.py`).
 
 ---
 
@@ -47,20 +48,27 @@ The following features are fully implemented and verified in the codebase:
                               - TransactionDataLoader
                               - CustomerDataLoader
                               - TransactionPreprocessor
+                              - SeedDataLoader (Synthetic Generator)
                                             │
                                             ▼
                               [ Dual-Screening Risk Engine ]
-                              - RuleEngine (5 AML Rules)
-                              - MLRiskClassifier (Random Forest)
+                              - RuleEngine (5 AML Rules + RuleExplanation)
+                              - MLRiskClassifier (Random Forest + MLExplanation)
                               - TransactionRiskAssessor
                                             │
                                             ▼
+                        [ Evidence Traceability Layer ]
+                        - EvidenceCollector (EV-TX, EV-RULE, EV-ML, etc.)
+                        - EvidenceItem & EvidenceType schemas
+                        - Evidence Traceability Matrix Generator
+                                            │
+                                            ▼
                               [ LangGraph Investigation Workflow ]
-                              Stage 1: Get Transaction Details
-                              Stage 2: Run Risk Assessment
-                              Stage 3: Fetch Customer KYC Profile
-                              Stage 4: Analyze Transaction History
-                              Stage 5: Retrieve Regulatory Policies (RAG)
+                              Stage 1: Get Transaction Details (EV-TX)
+                              Stage 2: Run Risk Assessment (EV-RULE, EV-ML)
+                              Stage 3: Fetch Customer KYC Profile (EV-CUST)
+                              Stage 4: Analyze Transaction History (EV-HIST)
+                              Stage 5: Retrieve Regulatory Policies (EV-RAG)
                               Stage 6: Synthesize Investigation Summary (LLM)
                                             │
                      ┌──────────────────────┴──────────────────────┐
@@ -78,6 +86,8 @@ The following features are fully implemented and verified in the codebase:
                               - Live API (Gemini / OpenAI)
                               - Grounded Offline Synthesizer
                               - Structured 8-Section Summary
+                              - Section 9: Evidence Traceability Matrix
+                              - Non-Autonomous Advisory Disclaimers
                                             │
                                             ▼
                               [ FastAPI REST API Layer ]
@@ -97,10 +107,11 @@ The project uses the following technologies verified from `requirements.txt` and
 
 * **FastAPI (`fastapi>=0.115.0`):** REST API framework providing route handling, automatic OpenAPI/Swagger documentation, and dependency injection.
 * **Uvicorn (`uvicorn>=0.30.0`):** ASGI web server executing the FastAPI application.
-* **Pydantic & Pydantic-Settings (`pydantic>=2.8.0`, `pydantic-settings>=2.4.0`):** Data validation, request/response schema modeling, and type-safe environment configuration.
+* **Pydantic & Pydantic-Settings (`pydantic>=2.8.0`, `pydantic-settings>=2.4.0`):** Data validation, request/response schema modeling, evidence domain modeling, and type-safe environment configuration.
 * **Pandas (`pandas>=2.2.0`):** Tabular data processing, CSV ingestion, missing value filtering, and dataset manipulation.
 * **NumPy (`numpy>=1.26.0`):** Numerical array operations and vector math for TF-IDF cosine similarity calculations.
 * **Scikit-Learn (`scikit-learn>=1.5.0`):** `RandomForestClassifier` for ML risk scoring and `TfidfVectorizer` for policy indexing.
+* **SciPy (`scipy>=1.13.0`):** Sparse matrix computations supporting TF-IDF vector operations and Scikit-Learn classifiers.
 * **Joblib (`joblib>=1.4.0`):** Serialization and persistence of trained ML models (`models/risk_classifier.joblib`) and vector indices (`data/chroma_db/policy_vectors.joblib`).
 * **HTTPX (`httpx>=0.27.0`):** HTTP client utilized by the FastAPI `TestClient` and for outbound LLM API requests.
 * **Python-Dotenv (`python-dotenv>=1.0.1`):** Parsing `.env` files into environment variables.
@@ -136,11 +147,16 @@ aml/
 │   ├── api/                          # FastAPI REST API layer
 │   │   ├── __init__.py
 │   │   ├── app.py                    # API routes, middleware, and route handlers
-│   │   └── schemas.py                # Pydantic request and response schemas
+│   │   └── schemas.py                # Pydantic request and response schemas (with Evidence trace)
 │   ├── data/                         # Data loading and preprocessing layer
 │   │   ├── __init__.py
 │   │   ├── loader.py                 # Transaction and customer data loaders
-│   │   └── preprocessor.py           # Feature engineering and ratio calculations
+│   │   ├── preprocessor.py           # Feature engineering and ratio calculations
+│   │   └── seed_data.py              # Synthetic transaction, KYC, and model training generator
+│   ├── evidence/                     # Evidence traceability and audit trail module
+│   │   ├── __init__.py
+│   │   ├── collector.py              # Chronological EvidenceCollector and markdown table formatter
+│   │   └── models.py                 # EvidenceItem and EvidenceType Pydantic domain models
 │   ├── mcp_tools/                    # Model Context Protocol (MCP) tool definitions
 │   │   ├── __init__.py
 │   │   ├── schemas.py                # MCP tool input/output Pydantic schemas
@@ -149,22 +165,22 @@ aml/
 │   ├── rag/                          # Retrieval-Augmented Generation policy engine
 │   │   ├── __init__.py
 │   │   ├── document_loader.py        # Markdown policy loader and text chunker
-│   │   ├── retriever.py              # Semantic query generator and citation formatter
+│   │   ├── retriever.py              # Semantic query generator and citation formatter with Chunk IDs
 │   │   └── vector_store.py           # Cosine TF-IDF vector store implementation
 │   ├── risk_engine/                  # Hybrid AML risk evaluation engine
 │   │   ├── __init__.py
 │   │   ├── assessor.py               # Combined dual-screening risk assessor
-│   │   ├── ml_model.py               # Random Forest risk classification model
-│   │   └── rules.py                  # Deterministic compliance rules and rule engine
+│   │   ├── ml_model.py               # Random Forest risk classification model & MLExplanation
+│   │   └── rules.py                  # Deterministic compliance rules & RuleExplanation
 │   └── workflow/                     # LangGraph investigation orchestration
 │       ├── __init__.py
 │       ├── graph.py                  # Linear state graph coordinating investigation
 │       ├── llm.py                    # LLM integration service with offline fallback
-│       ├── nodes.py                  # Individual graph node functions
+│       ├── nodes.py                  # Individual graph node functions with Evidence collection
 │       ├── prompt.py                 # System and evidence prompt construction
 │       └── state.py                  # Investigation state schemas
 │
-└── tests/                            # Automated test suite (91 passing tests)
+└── tests/                            # Automated test suite
     ├── __init__.py
     ├── conftest.py                   # Shared pytest fixtures
     ├── test_api.py                   # Integration tests for FastAPI endpoints
@@ -212,6 +228,11 @@ The repository includes sample datasets and policies out of the box:
 * Customer KYC profiles: `data/processed/customers_sample.json`
 * Policy documents: `data/policies/*.md`
 * Pre-trained ML model artifact: `models/risk_classifier.joblib`
+
+To regenerate the synthetic datasets or retrain the baseline Random Forest model at any time, run:
+```bash
+python -m src.data.seed_data
+```
 
 ---
 
@@ -293,17 +314,57 @@ All endpoints return JSON responses.
 * **Path Parameters:** `transaction_id` (string, e.g. `TX-1001`).
 * **Response:** `200 OK` with transaction object, or `404 Not Found` if the transaction does not exist.
 
-### 5. Evaluate Transaction Risk
+### 5. Evaluate Transaction Risk with Explainability
 * **Method:** `GET`
 * **Path:** `/api/transactions/{transaction_id}/risk`
-* **Purpose:** Run dual-screening (rules engine + ML model) for a transaction.
+* **Purpose:** Run dual-screening (rules engine + ML model) for a transaction with complete explainability traces.
 * **Path Parameters:** `transaction_id` (string, e.g. `TX-1003`).
-* **Response:** Returns `final_risk_level`, `final_risk_score`, `is_flagged`, `rule_score`, `rule_severity`, `triggered_rules`, `ml_probability`, `ml_risk_level`, `top_ml_signals`, and `explanation`.
+* **Response:** Returns `final_risk_level`, `final_risk_score`, `is_flagged`, `rule_score`, `rule_severity`, `triggered_rules`, `ml_probability`, `ml_risk_level`, `top_ml_signals`, `explanation`, `rule_explanations`, and `ml_explanation`.
+  ```json
+  {
+    "transaction_id": "TX-1003",
+    "final_risk_level": "HIGH",
+    "final_risk_score": 0.895,
+    "is_flagged": true,
+    "rule_score": 0.9,
+    "rule_severity": "HIGH",
+    "triggered_rules": ["Potential Currency Structuring (Smurfing)"],
+    "ml_probability": 0.95,
+    "ml_risk_level": "HIGH",
+    "top_ml_signals": ["newbalanceDest (importance: 0.253)", "balance_drain_ratio (importance: 0.206)"],
+    "explanation": "Transaction flagged for potential structuring corridor evasion.",
+    "rule_explanations": [
+      {
+        "rule_id": "RULE_STRUCTURING",
+        "rule_name": "Potential Currency Structuring (Smurfing)",
+        "triggered": true,
+        "severity": "HIGH",
+        "risk_contribution_score": 0.9,
+        "reason": "The transaction amount of $9,500.00 falls into the configured structuring corridor ($9,000.00 - $9,999.99).",
+        "condition": "STRUCTURING_LOWER_BOUND <= amount <= STRUURING_UPPER_BOUND",
+        "observed_values": {"amount": 9500.0},
+        "configured_thresholds": {"lower_bound": 9000.0, "upper_bound": 9999.99}
+      }
+    ],
+    "ml_explanation": {
+      "model_name": "RandomForestClassifier (Tabular AML Risk Classifier)",
+      "model_version": "1.0.0",
+      "anomaly_probability": 0.95,
+      "prediction_label": "Anomalous",
+      "risk_level": "HIGH",
+      "is_anomalous": true,
+      "input_features": {"amount": 9500.0, "oldbalanceOrg": 12000.0},
+      "top_signals": ["newbalanceDest (importance: 0.253)", "balance_drain_ratio (importance: 0.206)"],
+      "risk_interpretation": "High statistical anomaly detected (95.0% probability). Feature patterns diverge from baseline.",
+      "known_limitations": "Supervised Random Forest trained on synthetic tabular AML features. An anomaly score quantifies statistical deviation and does NOT confirm financial crime."
+    }
+  }
+  ```
 
-### 6. Run AI Investigation Workflow
+### 6. Run AI Investigation Workflow with Evidence Traceability
 * **Method:** `POST`
 * **Path:** `/api/investigate`
-* **Purpose:** Trigger the complete multi-step investigation workflow for a transaction.
+* **Purpose:** Trigger the complete multi-step investigation workflow for a transaction, capturing chronological evidence and audit trail.
 * **Request Body:**
   ```json
   {
@@ -316,13 +377,46 @@ All endpoints return JSON responses.
     "transaction_id": "TX-1003",
     "workflow_status": "COMPLETED",
     "final_risk_level": "HIGH",
-    "final_risk_score": 0.85,
+    "final_risk_score": 0.895,
     "is_flagged": true,
     "triggered_rules": ["Potential Currency Structuring (Smurfing)"],
     "customer_id": "CUST-103",
-    "investigation_summary": "# Transaction Investigation Summary: TX-1003\n\n## 1. Transaction Details...",
+    "investigation_summary": "# Transaction Investigation Summary: TX-1003\n\n## 1. Transaction Details\n[Evidence: EV-TX-TX-1003]...\n\n## 9. Evidence Traceability Matrix...",
     "recommended_action": "ESCALATE_TO_SAR_COMMITTEE",
-    "error_message": null
+    "error_message": null,
+    "evidence_trace": [
+      {
+        "evidence_id": "EV-TX-TX-1003",
+        "evidence_type": "TRANSACTION_DETAIL",
+        "source": "TransactionsDatabase",
+        "description": "Transaction TX-1003: TRANSFER of $9,500.00 via BRANCH to destination USA.",
+        "related_transaction_id": "TX-1003",
+        "related_customer_id": "CUST-103",
+        "retrieval_timestamp": "2026-09-08T14:10:00",
+        "confidence_or_score": 1.0,
+        "confidence_type": "Database Record Match"
+      },
+      {
+        "evidence_id": "EV-RULE-RULE_STRUCTURING",
+        "evidence_type": "RULE_INDICATOR",
+        "source": "DeterministicRuleEngine",
+        "description": "Rule 'Potential Currency Structuring (Smurfing)' (HIGH severity)",
+        "related_transaction_id": "TX-1003",
+        "confidence_or_score": 0.9,
+        "confidence_type": "Rule Severity Score"
+      }
+    ],
+    "rule_explanations": [...],
+    "ml_explanation": {...},
+    "ai_interpretation": {
+      "assessment_type": "AI-Assisted Preliminary Investigative Assessment",
+      "evaluated_risk_level": "HIGH",
+      "recommended_action": "ESCALATE_TO_SAR_COMMITTEE",
+      "is_autonomous_decision": false,
+      "disclaimer": "This assessment is preliminary AI-assisted guidance for human compliance officers. It does NOT constitute a final AML, legal, or compliance determination.",
+      "evidence_count": 8,
+      "referenced_evidence_ids": ["EV-TX-TX-1003", "EV-RULE-RULE_STRUCTURING", "EV-ML-TX-1003"]
+    }
   }
   ```
 
@@ -330,28 +424,29 @@ All endpoints return JSON responses.
 
 ## How the Investigation Workflow Works
 
-When `/api/investigate` is called, the LangGraph state graph (`src/workflow/graph.py`) executes 6 sequential nodes:
+When `/api/investigate` is called, the LangGraph state graph (`src/workflow/graph.py`) executes 6 sequential nodes with end-to-end evidence collection:
 
 1. **Stage 1: Retrieve Transaction Details (`get_transaction_details`):**
-   Calls MCP tool to fetch amount, execution channel, timestamp, and originator/beneficiary balance deltas. Halts safely if transaction does not exist.
+   Calls MCP tool to fetch transaction metadata and balance deltas; records `EV-TX-{tx_id}` in `EvidenceCollector`. Halts safely if transaction does not exist.
 2. **Stage 2: Evaluate Transaction Risk (`get_risk_analysis`):**
-   Calls MCP tool to execute the deterministic rules engine and ML classifier, determining risk level, scores, and triggered rules.
+   Calls MCP tool to execute deterministic rules and ML classifier; records `EV-RULE-{rule_id}` and `EV-ML-{tx_id}` with feature importance and anomaly metrics.
 3. **Stage 3: Retrieve Customer KYC Profile (`get_customer_profile`):**
-   Calls MCP tool to look up customer profile, declared occupation, monthly turnover, KYC risk tier, and PEP status.
+   Calls MCP tool to look up customer profile, occupation, turnover, KYC tier, and PEP status; records `EV-CUST-{customer_id}`.
 4. **Stage 4: Fetch Historical Account Patterns (`get_transaction_history`):**
-   Calls MCP tool to inspect past customer transactions, calculating baseline transaction velocity, average amounts, and unique counterparties.
+   Calls MCP tool to inspect customer transaction history; records `EV-HIST-{customer_id}` with velocity, average amount, and counterparties.
 5. **Stage 5: Retrieve Regulatory Policies (`retrieve_aml_policies`):**
-   Queries the RAG vector store using identified risk flags, matching relevant clauses from FATF standards, FinCEN advisories, and internal bank policies.
+   Queries the RAG vector store using identified risk flags; records `EV-RAG-{doc_id}-{chunk_id}` with document authority and TF-IDF similarity scores.
 6. **Stage 6: Synthesize Investigation Summary (`generate_investigation_summary`):**
-   Assembles the evidence into an 8-section case report containing:
-   * 1. Transaction Details
-   * 2. Customer Information
-   * 3. Transaction Risk Assessment
-   * 4. Historical Transaction Observations
+   Assembles all evidence into a structured case report containing:
+   * 1. Transaction Details (cited with `EV-TX-...`)
+   * 2. Customer Information (cited with `EV-CUST-...`)
+   * 3. Transaction Risk Assessment (cited with `EV-RULE-...` and `EV-ML-...`)
+   * 4. Historical Transaction Observations (cited with `EV-HIST-...`)
    * 5. Potential Risk Indicators
-   * 6. Relevant AML Policy Information (with citations)
-   * 7. AI-Generated Initial Assessment
+   * 6. Relevant AML Policy Information (cited with `EV-RAG-...`)
+   * 7. AI-Generated Initial Assessment (clearly labeled AI analytical perspective)
    * 8. Recommended Next Investigation Steps (`CLOSE_AS_FALSE_POSITIVE`, `REQUEST_INFORMATION_RFI`, or `ESCALATE_TO_SAR_COMMITTEE`)
+   * 9. Evidence Traceability Matrix (full Markdown table mapping every evidence ID, source, description, and confidence metric)
 
 ---
 

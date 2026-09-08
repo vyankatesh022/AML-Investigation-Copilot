@@ -30,6 +30,10 @@ class InvestigationWorkflow:
             "recommended_action": "CLOSE_AS_FALSE_POSITIVE",
             "workflow_status": "IN_PROGRESS",
             "error_message": None,
+            "evidence_items": [],
+            "rule_explanations": [],
+            "ml_explanation": None,
+            "ai_interpretation": None,
         }
 
         # Step 1: Get Transaction Details
@@ -79,4 +83,8 @@ class InvestigationWorkflow:
             investigation_summary=state.get("investigation_summary"),
             recommended_action=state.get("recommended_action", "CLOSE_AS_FALSE_POSITIVE"),
             error_message=state.get("error_message"),
+            evidence_trace=state.get("evidence_items", []),
+            rule_explanations=state.get("rule_explanations", []),
+            ml_explanation=state.get("ml_explanation"),
+            ai_interpretation=state.get("ai_interpretation"),
         )

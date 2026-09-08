@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import joblib
 import numpy as np
 import pandas as pd
+from pydantic import BaseModel, Field
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 from sklearn.model_selection import train_test_split
@@ -30,6 +31,28 @@ MODEL_FEATURE_COLUMNS: List[str] = [
     "is_payment",
     "is_deposit",
 ]
+
+
+class MLExplanation(BaseModel):
+    """Structured explainability and transparency metadata for machine learning risk inference."""
+
+    model_name: str = Field(default="RandomForestClassifier (Tabular AML Risk Classifier)")
+    model_version: str = Field(default="1.0.0")
+    anomaly_probability: float = Field(..., description="Estimated statistical probability of anomaly (0.0 to 1.0)")
+    prediction_label: str = Field(..., description="'Anomalous' or 'Normal'")
+    risk_level: str = Field(..., description="'LOW', 'MEDIUM', or 'HIGH'")
+    is_anomalous: bool = Field(..., description="Whether anomaly probability meets or exceeds 0.50 threshold")
+    input_features: Dict[str, float] = Field(default_factory=dict, description="Complete 15-feature numeric vector evaluated")
+    top_signals: List[str] = Field(default_factory=list, description="Top feature signals ranked by model importance")
+    signal_details: List[Dict[str, Any]] = Field(default_factory=list, description="Detailed feature names, observed values, and importances")
+    risk_interpretation: str = Field(..., description="Contextual interpretation distinguishing statistical anomaly from confirmed crime")
+    known_limitations: str = Field(
+        default=(
+            "Supervised Random Forest trained on synthetic tabular AML features. An anomaly score "
+            "quantifies deviation from normal baseline distributions and does NOT confirm money laundering "
+            "or financial crime. Network and multi-hop mule account detection requires graph analysis."
+        )
+    )
 
 
 class MLRiskClassifier:
@@ -138,10 +161,14 @@ class MLRiskClassifier:
                 f"Model not found at {self.model_path} and no training data provided to initialize."
             )
 
-    def predict_risk(self, tx: Dict[str, Any], history: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
-        """Predicts the risk probability and risk level for a single transaction."""
+    def get_explanation(
+        self,
+        tx: Dict[str, Any],
+        history: Optional[List[Dict[str, Any]]] = None,
+    ) -> MLExplanation:
+        """Generates a structured, transparent explainability object for model inference."""
         if self.model is None:
-            raise ValueError("Model must be loaded or trained before generating predictions.")
+            raise ValueError("Model must be loaded or trained before generating explanations.")
 
         feat_dict = self.extract_model_features(tx, history=history)
         X_single = pd.DataFrame([feat_dict])[self.feature_columns]
@@ -151,19 +178,57 @@ class MLRiskClassifier:
 
         if proba >= 0.70:
             risk_level = "HIGH"
+            interpretation = (
+                f"High statistical anomaly detected ({proba * 100:.1f}% probability). "
+                "Feature patterns diverge significantly from typical account baseline behaviors."
+            )
         elif proba >= 0.40:
             risk_level = "MEDIUM"
+            interpretation = (
+                f"Moderate anomaly score ({proba * 100:.1f}% probability). "
+                "Certain transaction features show mild deviation from median retail patterns."
+            )
         else:
             risk_level = "LOW"
+            interpretation = (
+                f"Low statistical anomaly score ({proba * 100:.1f}% probability). "
+                "Observed transaction features align with normal consumer banking distributions."
+            )
 
         # Feature importances for explainability
         importances = dict(zip(self.feature_columns, self.model.feature_importances_))
         top_features = sorted(importances.items(), key=lambda x: x[1], reverse=True)[:3]
 
+        top_signals_str = [f"{name} (importance: {round(val, 3)})" for name, val in top_features]
+        signal_details = [
+            {
+                "feature_name": name,
+                "observed_value": feat_dict.get(name),
+                "feature_importance": round(val, 4),
+            }
+            for name, val in top_features
+        ]
+
+        return MLExplanation(
+            anomaly_probability=round(proba, 4),
+            prediction_label="Anomalous" if prediction == 1 else "Normal",
+            risk_level=risk_level,
+            is_anomalous=bool(proba >= 0.50),
+            input_features=feat_dict,
+            top_signals=top_signals_str,
+            signal_details=signal_details,
+            risk_interpretation=interpretation,
+        )
+
+    def predict_risk(self, tx: Dict[str, Any], history: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+        """Predicts the risk probability, risk level, and transparent explainability for a single transaction."""
+        explanation = self.get_explanation(tx=tx, history=history)
+
         return {
-            "ml_risk_probability": round(proba, 4),
-            "ml_prediction": prediction,
-            "ml_risk_level": risk_level,
-            "ml_is_anomalous": bool(proba >= 0.50),
-            "top_model_signals": [f"{name} (importance: {round(val, 3)})" for name, val in top_features],
+            "ml_risk_probability": explanation.anomaly_probability,
+            "ml_prediction": 1 if explanation.prediction_label == "Anomalous" else 0,
+            "ml_risk_level": explanation.risk_level,
+            "ml_is_anomalous": explanation.is_anomalous,
+            "top_model_signals": explanation.top_signals,
+            "ml_explanation": explanation.model_dump(),
         }

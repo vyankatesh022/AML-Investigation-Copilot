@@ -20,6 +20,10 @@ class InvestigationWorkflowState(TypedDict, total=False):
     recommended_action: str
     workflow_status: str  # "IN_PROGRESS", "COMPLETED", "FAILED"
     error_message: Optional[str]
+    evidence_items: List[Dict[str, Any]]
+    rule_explanations: List[Dict[str, Any]]
+    ml_explanation: Optional[Dict[str, Any]]
+    ai_interpretation: Optional[Dict[str, Any]]
 
 
 class InvestigationResult(BaseModel):
@@ -35,3 +39,7 @@ class InvestigationResult(BaseModel):
     investigation_summary: Optional[str] = None
     recommended_action: str = Field(default="CLOSE_AS_FALSE_POSITIVE")
     error_message: Optional[str] = None
+    evidence_trace: List[Dict[str, Any]] = Field(default_factory=list, description="Structured chronological audit trail of all evidence items")
+    rule_explanations: List[Dict[str, Any]] = Field(default_factory=list, description="Explanations for all triggered compliance rules")
+    ml_explanation: Optional[Dict[str, Any]] = Field(default=None, description="Explainability metadata for ML anomaly detection")
+    ai_interpretation: Optional[Dict[str, Any]] = Field(default=None, description="AI-generated interpretation clearly separated from factual evidence")

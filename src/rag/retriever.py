@@ -101,7 +101,7 @@ class AMLPolicyRetriever:
 
     @staticmethod
     def format_citations(retrieved_chunks: List[Dict[str, Any]]) -> str:
-        """Formats retrieved chunks into clean, human-readable compliance citations."""
+        """Formats retrieved chunks into clean, human-readable compliance citations with source traceability."""
         if not retrieved_chunks:
             return "No specific regulatory policy clauses directly matched the query."
 
@@ -111,16 +111,35 @@ class AMLPolicyRetriever:
             doc_title = chunk.get("doc_title", "AML Policy")
             section = chunk.get("section_title", "General")
             score = chunk.get("similarity_score", 0.0)
+            chunk_id = chunk.get("chunk_id", f"CHK-{idx:02d}")
             content = chunk.get("content", "").strip()
 
             citation = (
-                f"[{idx}] {doc_title} ({source})\n"
-                f"    Section: {section} | Match Confidence: {score:.2f}\n"
-                f"    Excerpt: \"{content[:250]}...\""
+                f"[{idx}] {doc_title} ({source}) [Chunk ID: {chunk_id}]\n"
+                f"    Section: {section} | Match Confidence: {score:.2f} (TF-IDF Cosine Similarity)\n"
+                f"    Direct Policy Excerpt: \"{content[:250]}...\""
             )
             citations.append(citation)
 
         return "\n\n".join(citations)
+
+    @staticmethod
+    def get_traceable_sources(retrieved_chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Returns structured metadata records for each retrieved policy chunk to support evidence traceability."""
+        sources = []
+        for idx, chunk in enumerate(retrieved_chunks, start=1):
+            sources.append({
+                "citation_index": idx,
+                "chunk_id": chunk.get("chunk_id", ""),
+                "doc_id": chunk.get("doc_id", ""),
+                "doc_title": chunk.get("doc_title", ""),
+                "source": chunk.get("source", ""),
+                "section_title": chunk.get("section_title", ""),
+                "similarity_score": round(float(chunk.get("similarity_score", 0.0)), 4),
+                "score_type": "TF-IDF Cosine Similarity",
+                "excerpt": chunk.get("content", "").strip()[:300],
+            })
+        return sources
 
     def evaluate_retrieval(self, test_suite: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """Evaluates policy retrieval against benchmark test queries with known expected documents."""

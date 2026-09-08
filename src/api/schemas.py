@@ -50,8 +50,25 @@ class HighRiskTransactionItem(BaseModel):
     triggered_rules: List[str]
 
 
+class EvidenceItemResponse(BaseModel):
+    """Schema for individual evidence items in investigation responses."""
+
+    evidence_id: str = Field(..., description="Unique evidence identifier")
+    evidence_type: str = Field(..., description="Category of evidence")
+    source: str = Field(..., description="Originating data source or model")
+    description: str = Field(..., description="Factual description of the evidence")
+    related_transaction_id: str
+    related_customer_id: Optional[str] = None
+    supporting_data: Dict[str, Any] = Field(default_factory=dict)
+    retrieval_timestamp: str
+    relevance_explanation: str = ""
+    availability: str = "AVAILABLE"
+    confidence_or_score: Optional[float] = None
+    confidence_type: Optional[str] = None
+
+
 class RiskAnalysisResponse(BaseModel):
-    """Schema for transaction dual-screening risk analysis results."""
+    """Schema for transaction dual-screening risk analysis results with explainability."""
 
     transaction_id: str
     final_risk_level: str
@@ -64,6 +81,8 @@ class RiskAnalysisResponse(BaseModel):
     ml_risk_level: str
     top_ml_signals: List[str]
     explanation: str
+    rule_explanations: List[Dict[str, Any]] = Field(default_factory=list, description="Structured explainability for each triggered rule")
+    ml_explanation: Optional[Dict[str, Any]] = Field(default=None, description="Model transparency metadata and signal explanations")
 
 
 class InvestigationRequest(BaseModel):
@@ -73,7 +92,7 @@ class InvestigationRequest(BaseModel):
 
 
 class InvestigationResponse(BaseModel):
-    """Schema for structured AI investigation workflow output."""
+    """Schema for structured AI investigation workflow output with evidence trace."""
 
     transaction_id: str
     workflow_status: str = Field(..., description="'COMPLETED' or 'FAILED'")
@@ -85,6 +104,10 @@ class InvestigationResponse(BaseModel):
     investigation_summary: Optional[str] = None
     recommended_action: str = Field(default="CLOSE_AS_FALSE_POSITIVE")
     error_message: Optional[str] = None
+    evidence_trace: List[EvidenceItemResponse] = Field(default_factory=list, description="Chronological audit trail of collected evidence")
+    rule_explanations: List[Dict[str, Any]] = Field(default_factory=list, description="Structured rule explainability items")
+    ml_explanation: Optional[Dict[str, Any]] = Field(default=None, description="ML anomaly explainability metadata")
+    ai_interpretation: Optional[Dict[str, Any]] = Field(default=None, description="AI-assisted interpretation clearly separated from factual evidence")
 
 
 class ErrorResponse(BaseModel):
